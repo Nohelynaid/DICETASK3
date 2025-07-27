@@ -1,180 +1,150 @@
 from tabulate import tabulate
 import sys
-import random
-import secrets
 import hmac
 import hashlib
+import secrets
 
 def get_dice():
     args = sys.argv[1:]
     if len(args) < 3:
-        print("Error: You must enter at least 3 dice.\nExample: 1,2,3,4,5,6 2,2,2,5,5,5 6,6,6,1,1,1")
+        print("Error: You must enter at least 3 dice.")
+        print("Example: 1,2,3,4,5,6 2,2,2,5,5,5 6,6,6,1,1,1")
         sys.exit(1)
     dice = []
     for arg in args:
-        try:
-            faces = list(map(int, arg.split(',')))
-        except ValueError:
-            print("Error: Dice must be integers separated by commas.")
-            sys.exit(1)
+        faces = [int(x) for x in arg.split(',') if x.strip() != '']
         if len(faces) != 6:
             print("Error: Each dice must have exactly 6 values.")
             sys.exit(1)
         dice.append(faces)
     return dice
 
-def flip_coin():
-    c = random.randint(0,1)
-    s = str(random.randint(1,999999))
-    commit = hashlib.sha256((s + str(c)).encode()).hexdigest()
-    print(f"\n=== Coin toss to decide who starts ===")
-    print(f"Commitment (SHA256): {commit}")
-    input("Press Enter to reveal the result...")
-    print(f"Secret revealed: {s}")
-    print(f"Result: {'You start (0)' if c == 0 else 'Computer starts (1)'}")
-    print("You can verify: SHA256(secret + result) == commitment\n")
-    return c
+def commit_number(name):
+    number = secrets.randbelow(2)
+    secret = secrets.token_bytes(16)
+    h = hmac.new(secret, str(number).encode(), hashlib.sha3_256).hexdigest()
+    print(f"{name} HMAC: {h}")
+    return number, secret, h
+
+def reveal_number(name, number, secret):
+    print(f"{name} reveals: number = {number}, secret = {secret.hex()}")
+    h = hmac.new(secret, str(number).encode(), hashlib.sha3_256).hexdigest()
+    print(f"{name} HMAC check: {h}")
+    return number
+
+def coin_toss():
+    print("\n=== COIN TOSS ===")
+    user_num, user_sec, _ = commit_number("User")
+    comp_num, comp_sec, _ = commit_number("Computer")
+
+    input("Press Enter to reveal both secrets...")
+    user_choice = reveal_number("User", user_num, user_sec)
+    comp_choice = reveal_number("Computer", comp_num, comp_sec)
+
+    result = (user_choice + comp_choice) % 2
+    print(f"Result: {'User' if result == 0 else 'Computer'} starts\n")
+    return result
+
+def pick_dice(dice, user=True, forbidden=None):
+    role = "Your" if user else "Computer's"
+    while True:
+        print(f"{role} turn to pick a die:")
+        for i, d in enumerate(dice):
+            print(f"{i} - {d}")
+        print("? - Show win probabilities")
+        print("X - Exit")
+        choice = input("Pick: ").strip().upper() if user else str(secrets.randbelow(len(dice)))
+        if choice == 'X':
+            sys.exit(0)
+        elif choice == '?':
+            print_prob_table(dice)
+            continue
+        elif choice.isdigit():
+            idx = int(choice)
+            if 0 <= idx < len(dice):
+                if forbidden is not None and idx == forbidden:
+                    print("You can't pick the opponent's die.")
+                    continue
+                print(f"{role} chose die {idx}: {dice[idx]}")
+                return idx
+        if user:
+            print("Invalid input.")
+
+def secure_roll(name, dice):
+    index = secrets.randbelow(len(dice))
+    secret = secrets.token_bytes(16)
+    h = hmac.new(secret, str(index).encode(), hashlib.sha3_256).hexdigest()
+    print(f"{name} roll HMAC: {h}")
+    input(f"Press Enter to reveal {name}'s roll...")
+    print(f"{name} roll index: {index}, value: {dice[index]}, secret: {secret.hex()}")
+    verify = hmac.new(secret, str(index).encode(), hashlib.sha3_256).hexdigest()
+    print(f"{name} HMAC check: {verify}\n")
+    return index, dice[index]
 
 def calc_win_prob(d1, d2):
-    wins = 0
-    total = 36
-    for f1 in d1:
-        for f2 in d2:
-            if f1 > f2:
-                wins += 1
-    return wins / total
+    wins = sum(1 for i in d1 for j in d2 if i > j)
+    return wins / 36
 
 def print_prob_table(dice):
-    n = len(dice)
-    headers = ["Dice"] + [f"Dice {i+1}" for i in range(n)]
+    headers = ["Dice"] + [f"Dice {i+1}" for i in range(len(dice))]
     table = []
-    for i in range(n):
+    for i, d1 in enumerate(dice):
         row = [f"Dice {i+1}"]
-        for j in range(n):
+        for j, d2 in enumerate(dice):
             if i == j:
                 row.append("-")
             else:
-                p = calc_win_prob(dice[i], dice[j])
-                row.append(f"{p:.2f}")
+                row.append(f"{calc_win_prob(d1, d2):.2f}")
         table.append(row)
-    print("=== Winning Probability Table ===")
-    print("Each cell shows the probability of the dice in the row vs the dice in the column.\n")
     print(tabulate(table, headers=headers, tablefmt="grid"))
-    print()
-
-def pick_dice(dice, user=True, forbidden=None):
-    print(f"{'Your turn: Choose a dice' if user else 'Computer turn: choosing dice'}")
-    while True:
-        for i, d in enumerate(dice):
-            print(f"{i} - {','.join(map(str,d))}")
-        print("X - quit")
-        print("? - help")
-
-        ch = input("Your selection: ").strip().upper()
-        if ch == 'X':
-            print("Game finished")
-            sys.exit(0)
-        elif ch == '?':
-            print_prob_table(dice)
-            continue
-        elif ch.isdigit():
-            idx = int(ch)
-            if 0 <= idx < len(dice):
-                if forbidden is not None and idx == forbidden:
-                    print("❗ You cannot choose your opponent's dice. Try again.")
-                    continue
-                print(f"{'You chose' if user else 'Computer chose'} Dice {idx}: {dice[idx]}")
-                return idx
-            else:
-                print("Invalid choice. Try again.")
-        else:
-            print("Invalid input. Try again.")
-
-def secure_roll(die):
-    key = secrets.token_bytes(32)
-    max_v = len(die)
-    while True:
-        rb = secrets.token_bytes(4)
-        ri = int.from_bytes(rb, 'big')
-        if ri < (2**32 // max_v) * max_v:
-            num = ri % max_v
-            break
-    h = hmac.new(key, str(num).encode(), hashlib.sha3_256).hexdigest()
-
-    print("\n--- Computer's secure roll ---")
-    print(f"(Secret number hidden): {h}")
-    print(f"Choose a number 0 to {max_v - 1} to add modulo {max_v} to computer's secret.")
-
-    while True:
-        ui = input(f"Choose number (0 to {max_v -1}): ").strip().upper()
-        if ui == 'X':
-            print("Game terminated.")
-            sys.exit(0)
-        elif ui == '?':
-            print(f"Instruction: Pick integer between 0 and {max_v -1}.")
-            continue
-        elif ui.isdigit():
-            un = int(ui)
-            if 0 <= un < max_v:
-                break
-            else:
-                print("Out of range. Try again.")
-        else:
-            print("Invalid input. Try again.")
-
-    res = (un + num) % max_v
-
-    print("\n--- Result revealed ---")
-    print(f"Secret key (hex): {key.hex()}")
-    print(f"Computer's secret number: {num}")
-    print(f"Your chosen number: {un}")
-    print(f"Final roll (mod {max_v}): {res}")
-    print(f"Dice face value: {die[res]}")
-    print("--------------------------------------\n")
-
-    return res
-
-def comp_turn(dice, forbidden):
-    idx = random.choice([i for i in range(len(dice)) if i != forbidden])
-    roll_idx = secure_roll(dice[idx])
-    print(f"Computer chose Dice {idx} and rolled {dice[idx][roll_idx]}")
-    return idx, roll_idx
 
 def play_game():
     dice = get_dice()
-    first = flip_coin()
+    first = coin_toss()
 
-    if first == 0:
-        print("You start first.")
-        user_idx = pick_dice(dice, user=True)
-        user_roll_idx = secure_roll(dice[user_idx])
-        user_roll_val = dice[user_idx][user_roll_idx]
-        print(f"You rolled {user_roll_val}.")
-
-        comp_idx, comp_roll_idx = comp_turn(dice, forbidden=user_idx)
-        comp_roll_val = dice[comp_idx][comp_roll_idx]
-
-    else:
-        print("Computer starts first.")
+    if first == 1:
         comp_idx = pick_dice(dice, user=False)
-        comp_roll_idx = secure_roll(dice[comp_idx])
-        comp_roll_val = dice[comp_idx][comp_roll_idx]
-        print(f"Computer rolled {comp_roll_val}.")
+        
+        comp_roll_index = secrets.randbelow(6)
+        comp_secret = secrets.token_bytes(16)
+        comp_hmac = hmac.new(comp_secret, str(comp_roll_index).encode(), hashlib.sha3_256).hexdigest()
+        print(f"Computer roll HMAC: {comp_hmac}\n")
 
         user_idx = pick_dice(dice, user=True, forbidden=comp_idx)
-        user_roll_idx = secure_roll(dice[user_idx])
-        user_roll_val = dice[user_idx][user_roll_idx]
-        print(f"You rolled {user_roll_val}.")
+        user_roll_index, user_value = secure_roll("User", dice[user_idx])
 
-    print("\n=== FINAL RESULT ===")
-    print(f"You: {user_roll_val}  |  Computer: {comp_roll_val}")
-    if user_roll_val > comp_roll_val:
+        input("Press Enter to reveal Computer's roll...")
+        print(f"Computer roll index: {comp_roll_index}, value: {dice[comp_idx][comp_roll_index]}, secret: {comp_secret.hex()}")
+        check = hmac.new(comp_secret, str(comp_roll_index).encode(), hashlib.sha3_256).hexdigest()
+        print(f"Computer HMAC check: {check}\n")
+        comp_value = dice[comp_idx][comp_roll_index]
+
+    else:
+        user_idx = pick_dice(dice, user=True)
+       
+        user_roll_index = secrets.randbelow(6)
+        user_secret = secrets.token_bytes(16)
+        user_hmac = hmac.new(user_secret, str(user_roll_index).encode(), hashlib.sha3_256).hexdigest()
+        print(f"User roll HMAC: {user_hmac}\n")
+
+        comp_idx = pick_dice(dice, user=False, forbidden=user_idx)
+        comp_roll_index, comp_value = secure_roll("Computer", dice[comp_idx])
+
+        input("Press Enter to reveal User's roll...")
+        print(f"User roll index: {user_roll_index}, value: {dice[user_idx][user_roll_index]}, secret: {user_secret.hex()}")
+        check = hmac.new(user_secret, str(user_roll_index).encode(), hashlib.sha3_256).hexdigest()
+        print(f"User HMAC check: {check}\n")
+        user_value = dice[user_idx][user_roll_index]
+
+    print("=== FINAL RESULT ===")
+    print(f"Your value: {user_value}")
+    print(f"Computer value: {comp_value}")
+    if user_value > comp_value:
         print("You win!")
-    elif user_roll_val < comp_roll_val:
+    elif user_value < comp_value:
         print("Computer wins!")
     else:
         print("It's a tie!")
-
 
 if __name__ == "__main__":
     play_game()
