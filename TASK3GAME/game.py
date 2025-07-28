@@ -10,14 +10,32 @@ def get_dice():
         print("Error: You must enter at least 3 dice.")
         print("Example: 1,2,3,4,5,6 2,2,2,5,5,5 6,6,6,1,1,1")
         sys.exit(1)
+
     dice = []
-    for arg in args:
-        faces = [int(x) for x in arg.split(',') if x.strip() != '']
-        if len(faces) != 6:
-            print("Error: Each dice must have exactly 6 values.")
+    for i, arg in enumerate(args):
+        parts = arg.split(',')
+
+        if len(parts) != 6:
+            print(f"Error: Dice {i+1} must have exactly 6 faces.")
             sys.exit(1)
-        dice.append(faces)
+
+        try:
+            faces = []
+            for face in parts:
+                face = face.strip()
+                if not face.isdigit():
+                    raise ValueError
+                num = int(face)
+                if not (0 <= num <= 9):
+                    raise ValueError
+                faces.append(num)
+            dice.append(faces)
+        except ValueError:
+            print(f"Error: Dice {i+1} contains invalid faces. Only digits 0–9 are allowed.")
+            sys.exit(1)
+
     return dice
+
 
 def commit_number(number):
     secret = secrets.token_bytes(32)  # 256 bits key
