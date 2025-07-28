@@ -19,67 +19,78 @@ def get_dice():
         dice.append(faces)
     return dice
 
-def commit_number(name):
-    number = secrets.randbelow(2)
-    secret = secrets.token_bytes(16)
+def commit_number(number):
+    secret = secrets.token_bytes(32)  # 256 bits key
     h = hmac.new(secret, str(number).encode(), hashlib.sha3_256).hexdigest()
-    print(f"{name} HMAC: {h}")
-    return number, secret, h
+    return secret, h
 
-def reveal_number(name, number, secret):
+def reveal_commit(name, number, secret):
     print(f"{name} reveals: number = {number}, secret = {secret.hex()}")
     h = hmac.new(secret, str(number).encode(), hashlib.sha3_256).hexdigest()
-    print(f"{name} HMAC check: {h}")
-    return number
+    print(f"{name} HMAC check: {h}\n")
 
 def coin_toss():
     print("\n=== COIN TOSS ===")
-    user_num, user_sec, _ = commit_number("User")
-    comp_num, comp_sec, _ = commit_number("Computer")
+    comp_number = secrets.randbelow(2)
+    comp_secret, comp_hmac = commit_number(comp_number)
+    print(f"Computer HMAC: {comp_hmac}")
 
-    input("Press Enter to reveal both secrets...")
-    user_choice = reveal_number("User", user_num, user_sec)
-    comp_choice = reveal_number("Computer", comp_num, comp_sec)
+    while True:
+        user_input = input("Your coin toss guess (0 or 1): ").strip()
+        if user_input in ('0', '1'):
+            user_guess = int(user_input)
+            break
+        print("Invalid input. Please enter 0 or 1.")
 
-    result = (user_choice + comp_choice) % 2
-    print(f"Result: {'User' if result == 0 else 'Computer'} starts\n")
-    return result
+    input("Press Enter to reveal Computer's choice...")
+    reveal_commit("Computer", comp_number, comp_secret)
+
+    if user_guess == comp_number:
+        print("You start!\n")
+        return 0  # user first
+    else:
+        print("Computer starts.\n")
+        return 1  # computer first
 
 def pick_dice(dice, user=True, forbidden=None):
     role = "Your" if user else "Computer's"
-    while True:
-        print(f"{role} turn to pick a die:")
-        for i, d in enumerate(dice):
-            print(f"{i} - {d}")
-        print("? - Show win probabilities")
-        print("X - Exit")
-        choice = input("Pick: ").strip().upper() if user else str(secrets.randbelow(len(dice)))
-        if choice == 'X':
-            sys.exit(0)
-        elif choice == '?':
-            print_prob_table(dice)
-            continue
-        elif choice.isdigit():
-            idx = int(choice)
-            if 0 <= idx < len(dice):
-                if forbidden is not None and idx == forbidden:
-                    print("You can't pick the opponent's die.")
+    if not user:
+        options = [i for i in range(len(dice)) if i != forbidden]
+        comp_choice = secrets.choice(options)
+        comp_secret, comp_hmac = commit_number(comp_choice)
+        print(f"Computer commitment to dice choice HMAC: {comp_hmac}")
+        return comp_choice, comp_secret
+    else:
+        while True:
+            print(f"{role} turn to pick a dice:")
+            for i, d in enumerate(dice):
+                if forbidden is not None and i == forbidden:
                     continue
-                print(f"{role} chose die {idx}: {dice[idx]}")
-                return idx
-        if user:
+                print(f"{i} - {d}")
+            print("? - Show win probabilities")
+            print("X - Exit")
+            choice = input("Pick: ").strip().upper()
+
+            if choice == 'X':
+                sys.exit(0)
+            elif choice == '?' and user:
+                print_prob_table(dice)
+                continue
+            elif choice.isdigit():
+                idx = int(choice)
+                if 0 <= idx < len(dice):
+                    if forbidden is not None and idx == forbidden:
+                        print("You can't pick the opponent's die.")
+                        continue
+                    print(f"You chose dice {idx}: {dice[idx]}")
+                    return idx
             print("Invalid input.")
 
-def secure_roll(name, dice):
-    index = secrets.randbelow(len(dice))
-    secret = secrets.token_bytes(16)
-    h = hmac.new(secret, str(index).encode(), hashlib.sha3_256).hexdigest()
-    print(f"{name} roll HMAC: {h}")
-    input(f"Press Enter to reveal {name}'s roll...")
-    print(f"{name} roll index: {index}, value: {dice[index]}, secret: {secret.hex()}")
-    verify = hmac.new(secret, str(index).encode(), hashlib.sha3_256).hexdigest()
-    print(f"{name} HMAC check: {verify}\n")
-    return index, dice[index]
+def secure_computer_roll():
+    comp_index = secrets.randbelow(6)
+    comp_secret, comp_hmac = commit_number(comp_index)
+    print(f"Computer roll commitment HMAC: {comp_hmac}")
+    return comp_index, comp_secret
 
 def calc_win_prob(d1, d2):
     wins = sum(1 for i in d1 for j in d2 if i > j)
@@ -98,43 +109,68 @@ def print_prob_table(dice):
         table.append(row)
     print(tabulate(table, headers=headers, tablefmt="grid"))
 
+def get_user_roll_index():
+    while True:
+        user_input = input("Enter your roll number (0-5): ").strip()
+        if user_input.isdigit():
+            idx = int(user_input)
+            if 0 <= idx <= 5:
+                return idx
+        print("Invalid input. Please enter a number between 0 and 5.")
+
 def play_game():
     dice = get_dice()
     first = coin_toss()
 
-    if first == 1:
-        comp_idx = pick_dice(dice, user=False)
-        
-        comp_roll_index = secrets.randbelow(6)
-        comp_secret = secrets.token_bytes(16)
-        comp_hmac = hmac.new(comp_secret, str(comp_roll_index).encode(), hashlib.sha3_256).hexdigest()
-        print(f"Computer roll HMAC: {comp_hmac}\n")
+    user_value = None
+    comp_value = None
 
+    if first == 1:  # Computer starts
+        comp_idx, comp_secret = pick_dice(dice, user=False)
         user_idx = pick_dice(dice, user=True, forbidden=comp_idx)
-        user_roll_index, user_value = secure_roll("User", dice[user_idx])
+
+        input("Press Enter to reveal Computer's dice choice...")
+        reveal_commit("Computer", comp_idx, comp_secret)
+
+        user_roll_index = get_user_roll_index()
+        user_value = dice[user_idx][user_roll_index]
+        print(f"You rolled index {user_roll_index}: value {user_value}\n")
+
+        comp_roll_index, comp_roll_secret = secure_computer_roll()
 
         input("Press Enter to reveal Computer's roll...")
-        print(f"Computer roll index: {comp_roll_index}, value: {dice[comp_idx][comp_roll_index]}, secret: {comp_secret.hex()}")
-        check = hmac.new(comp_secret, str(comp_roll_index).encode(), hashlib.sha3_256).hexdigest()
-        print(f"Computer HMAC check: {check}\n")
-        comp_value = dice[comp_idx][comp_roll_index]
 
-    else:
+        final_comp_index = (comp_roll_index + user_roll_index) % 6
+        comp_value = dice[comp_idx][final_comp_index]
+
+        reveal_commit("Computer", comp_roll_index, comp_roll_secret)
+        print(f"Final computer roll index (combined): {final_comp_index}, value: {comp_value}")
+
+    else:  # User starts
         user_idx = pick_dice(dice, user=True)
-       
-        user_roll_index = secrets.randbelow(6)
-        user_secret = secrets.token_bytes(16)
-        user_hmac = hmac.new(user_secret, str(user_roll_index).encode(), hashlib.sha3_256).hexdigest()
-        print(f"User roll HMAC: {user_hmac}\n")
+        comp_idx, comp_secret = pick_dice(dice, user=False, forbidden=user_idx)
 
-        comp_idx = pick_dice(dice, user=False, forbidden=user_idx)
-        comp_roll_index, comp_value = secure_roll("Computer", dice[comp_idx])
+        input("Press Enter to reveal Computer's dice choice...")
+        reveal_commit("Computer", comp_idx, comp_secret)
 
-        input("Press Enter to reveal User's roll...")
-        print(f"User roll index: {user_roll_index}, value: {dice[user_idx][user_roll_index]}, secret: {user_secret.hex()}")
-        check = hmac.new(user_secret, str(user_roll_index).encode(), hashlib.sha3_256).hexdigest()
-        print(f"User HMAC check: {check}\n")
+        user_roll_index = get_user_roll_index()
         user_value = dice[user_idx][user_roll_index]
+        print(f"You rolled index {user_roll_index}: value {user_value}\n")
+
+        comp_roll_index, comp_roll_secret = secure_computer_roll()
+
+        input("Press Enter to reveal Computer's roll...")
+
+        final_comp_index = (comp_roll_index + user_roll_index) % 6
+        comp_value = dice[comp_idx][final_comp_index]
+
+        reveal_commit("Computer", comp_roll_index, comp_roll_secret)
+        print(f"Final computer roll index (combined): {final_comp_index}, value: {comp_value}")
+
+ 
+    if user_value is None or comp_value is None:
+        print("Error: Some values are missing. Exiting.")
+        sys.exit(1)
 
     print("=== FINAL RESULT ===")
     print(f"Your value: {user_value}")
